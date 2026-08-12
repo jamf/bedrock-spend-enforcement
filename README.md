@@ -158,6 +158,7 @@ Parameters:
 | `LogsBucket` | The S3 bucket your Bedrock invocation logs land in (Prerequisites) |
 | `AlarmEmail` *(optional)* | Email to notify on the policy-size alarm; leave empty to skip the subscription |
 | `SlackBotToken` *(optional)* | Slack bot token; leave empty to disable spend-threshold DMs |
+| `SlackEmailDomain` *(optional)* | Corporate email domain for resolving usernames to Slack IDs; required if `SlackBotToken` is set, otherwise leave empty — see [Slack notes](#slack-slash-commands-and-notifications) |
 
 ```bash
 aws cloudformation deploy \
@@ -171,7 +172,8 @@ aws cloudformation deploy \
     ExceptionsDynamoTableArn=<ExceptionsTableArn from step 1> \
     LogsBucket=<your-bedrock-logs-bucket> \
     AlarmEmail=<your-email@example.com> \
-    SlackBotToken=<xoxb-...>
+    SlackBotToken=<xoxb-...> \
+    SlackEmailDomain=<yourcompany.com>
 ```
 
 This stack creates the Athena-results bucket
@@ -184,11 +186,6 @@ aws cloudformation describe-stacks \
   --stack-name bedrock-spend-enforcement-lambda \
   --query 'Stacks[0].Outputs'
 ```
-
-If you're using Slack notifications, you also need to add a
-`SLACK_EMAIL_DOMAIN` environment variable to this function after the
-stack deploys — see the note under
-[Slack notes](#slack-slash-commands-and-notifications) below.
 
 ### 3. `infra/athena.yaml` — Glue table and cost view
 
@@ -228,6 +225,7 @@ Parameters:
 | `StateDynamoTableArn` | `StateTableArn` output from step 1 |
 | `ExceptionsDynamoTableArn` | `ExceptionsTableArn` output from step 1 |
 | `AdminSlackIds` *(optional)* | Comma-separated Slack user IDs allowed to run `/bedrock-block`, `/bedrock-unblock`, `/bedrock-limit` |
+| `SlackEmailDomain` *(optional)* | Corporate email domain for resolving usernames to Slack IDs; needed for `/bedrock-spend`'s spend lookup — see [Slack notes](#slack-slash-commands-and-notifications) |
 
 ```bash
 aws cloudformation deploy \
@@ -241,7 +239,8 @@ aws cloudformation deploy \
     SlackSigningSecret=<your-signing-secret> \
     StateDynamoTableArn=<StateTableArn from step 1> \
     ExceptionsDynamoTableArn=<ExceptionsTableArn from step 1> \
-    AdminSlackIds=<U012ABC,U034DEF>
+    AdminSlackIds=<U012ABC,U034DEF> \
+    SlackEmailDomain=<yourcompany.com>
 ```
 
 Read the outputs and paste each URL into the matching Slack app
@@ -301,29 +300,15 @@ from Bedrock entirely.
 Both `handler.py` (enforcement) and `slash_command.py` (slash commands)
 import `notifier.py` for message text and Slack delivery. `notifier.py`
 resolves each SSO username to a Slack user ID via
-`users.lookupByEmail(username@${SLACK_EMAIL_DOMAIN})`, and it reads
-`SLACK_EMAIL_DOMAIN` from the environment with no default. Neither
-`lambda.yaml` nor `slash-command.yaml` sets that variable, since every
-deployment has a different corporate email domain and there's no safe
-default to guess. After deploying both stacks, set it explicitly on both
-functions:
-
-```bash
-aws lambda update-function-configuration \
-  --function-name bedrock-spend-enforcement \
-  --environment "Variables={ATHENA_RESULTS_BUCKET=<existing-value>,STATE_TABLE=bedrock-spend-enforcement-state,EXCEPTIONS_TABLE=bedrock-spend-enforcement-exceptions,SLACK_BOT_TOKEN=<xoxb-...>,SLACK_EMAIL_DOMAIN=yourcompany.com}"
-
-aws lambda update-function-configuration \
-  --function-name bedrock-spend-enforcement-slash-command \
-  --environment "Variables={SLACK_BOT_TOKEN=<xoxb-...>,SLACK_SIGNING_SECRET=<...>,STATE_TABLE=bedrock-spend-enforcement-state,EXCEPTIONS_TABLE=bedrock-spend-enforcement-exceptions,ADMIN_SLACK_IDS=<...>,ENFORCEMENT_FUNCTION_NAME=bedrock-spend-enforcement,SLACK_EMAIL_DOMAIN=yourcompany.com}"
-```
-
-`update-function-configuration` replaces the full `Variables` map, so
-include every existing variable, not just the new one — use `aws lambda
-get-function-configuration` to see what's already set before running
-this. Skipping `SLACK_EMAIL_DOMAIN` is fine if you never set
-`SlackBotToken` in the first place — Slack DMs and `/bedrock-spend`'s
-spend lookup are the only things that need it.
+`users.lookupByEmail(username@${SLACK_EMAIL_DOMAIN})`, reading
+`SLACK_EMAIL_DOMAIN` from the environment. Both `lambda.yaml` and
+`slash-command.yaml` expose it as the `SlackEmailDomain` stack parameter
+(see the parameter tables in [Deploying](#deploying)) and wire it into
+each function's environment — there's no safe default baked into the
+templates, since every deployment has a different corporate email
+domain, so pass it explicitly at deploy time. It's safe to leave empty
+if you never set `SlackBotToken` in `lambda.yaml` — Slack DMs and
+`/bedrock-spend`'s spend lookup are the only things that need it.
 
 ## Required IAM permissions
 

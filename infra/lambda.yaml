@@ -46,6 +46,16 @@ Parameters:
       Slack bot token (xoxb-...) for spend threshold DMs. Leave empty to
       disable notifications — enforcement runs normally without it.
 
+  SlackEmailDomain:
+    Type: String
+    Default: ""
+    Description: >
+      Corporate email domain used to resolve SSO usernames to Slack user
+      IDs (username@SlackEmailDomain, via users.lookupByEmail). Required
+      if SlackBotToken is set — notifier.py has no safe default to guess,
+      since every deployment's email domain differs. Leave empty if
+      SlackBotToken is also empty.
+
 Conditions:
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
 
@@ -209,6 +219,7 @@ Resources:
           STATE_TABLE: bedrock-spend-enforcement-state
           EXCEPTIONS_TABLE: bedrock-spend-enforcement-exceptions
           SLACK_BOT_TOKEN: !Ref SlackBotToken
+          SLACK_EMAIL_DOMAIN: !Ref SlackEmailDomain
 
   Every15MinTrigger:
     Type: AWS::Events::Rule

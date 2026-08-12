@@ -37,6 +37,15 @@ Parameters:
       Comma-separated Slack user IDs allowed to use admin commands
       (/bedrock-block, /bedrock-unblock, /bedrock-limit).
 
+  SlackEmailDomain:
+    Type: String
+    Default: ""
+    Description: >
+      Corporate email domain used to resolve SSO usernames to Slack user
+      IDs (username@SlackEmailDomain, via users.lookupByEmail). Required
+      for /bedrock-spend's spend lookup — notifier.py has no safe default
+      to guess, since every deployment's email domain differs.
+
   StateDynamoTableArn:
     Type: String
     Description: ARN of the bedrock-spend-enforcement-state DynamoDB table
@@ -110,6 +119,7 @@ Resources:
           EXCEPTIONS_TABLE: bedrock-spend-enforcement-exceptions
           ADMIN_SLACK_IDS: !Ref AdminSlackIds
           ENFORCEMENT_FUNCTION_NAME: bedrock-spend-enforcement
+          SLACK_EMAIL_DOMAIN: !Ref SlackEmailDomain
 
   # Published version + alias exist so Slack's gateway invocation can target
   # a warm, provisioned-concurrency environment instead of $LATEST (which
