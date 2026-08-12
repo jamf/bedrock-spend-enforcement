@@ -16,12 +16,6 @@ Resources:
       KeySchema:
         - AttributeName: user_id
           KeyType: HASH
-      # Used by the Slack-identity cache (handler._slack_cache_put), keyed
-      # __slack_cache__<username> in this same table. Per-user spend/state
-      # items never set expires_at, so TTL only ever reaps cache entries.
-      TimeToLiveSpecification:
-        AttributeName: expires_at
-        Enabled: true
 
   ExceptionsTable:
     Type: AWS::DynamoDB::Table

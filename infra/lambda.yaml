@@ -168,15 +168,10 @@ Resources:
 
               # Single-account design: the Lambda writes CMP updates directly
               # in its own account instead of assuming a role into a separate
-              # enforcement account.
-              #
-              # PLACEHOLDER SCOPE: the CMP-creation template that defined the
-              # exact CMP name(s)/ARNs was not carried into this sample repo
-              # (it lived in a bootstrap/ stack tied to a since-dropped
-              # multi-account layout). Replace the Resource below with the
-              # actual ARN(s) of the customer-managed policy or policies your
-              # enforcement Lambda writes to, e.g.:
-              #   arn:aws:iam::${AWS::AccountId}:policy/BedrockSpendEnforcement-<tier>
+              # enforcement account. Scoped to the two shared customer-managed
+              # policies the Lambda actually writes (handler.T1_POLICY_ARN /
+              # T2_POLICY_ARN) — create BedrockEnforcement-T1/-T2 in this
+              # account before deploying the Lambda.
               - Sid: PolicyVersionManagement
                 Effect: Allow
                 Action:
@@ -184,7 +179,9 @@ Resources:
                   - iam:GetPolicy
                   - iam:ListPolicyVersions
                   - iam:DeletePolicyVersion
-                Resource: !Sub arn:aws:iam::${AWS::AccountId}:policy/BedrockSpendEnforcement-*
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:policy/BedrockEnforcement-T1
+                  - !Sub arn:aws:iam::${AWS::AccountId}:policy/BedrockEnforcement-T2
 
               - Sid: OversizeMetric
                 Effect: Allow
