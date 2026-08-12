@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Cross-account enforcement resources for bedrock-spend-enforcement.
+
+  Deploy this template in your ENFORCEMENT ACCOUNT (the account where your
+  IAM Identity Center users live and where Bedrock is accessed). It creates:
+
+    BedrockEnforcement-T1  — Deny policy for premium models (e.g. Opus)
+    BedrockEnforcement-T2  — Deny policy for mid-tier models (e.g. Sonnet)
+    bedrock-spend-enforcement  — cross-account role the Lambda assumes to update CMPs
+
+  Prerequisites:
+    - infra/lambda.yaml must be deployed first (in your Lambda account).
+    - Retrieve LambdaExecutionRoleArn from that stack's Outputs.
+    - Attach BedrockEnforcement-T1 and BedrockEnforcement-T2 to your IAM Identity
+      Center permission set (by name — Identity Center resolves by name at session time).
+
+  Deploy with an admin role in your enforcement account:
+
+    aws cloudformation deploy \
+      --template-file bootstrap/cross-account-iam-trust.yaml \
+      --stack-name bedrock-spend-enforcement \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --parameter-overrides \
+        LambdaExecutionRoleArn=<LambdaExecutionRoleArn from infra/lambda.yaml output> \
+        AwsRegion=us-east-1 \
+      --region us-east-1
+
+  IMPORTANT: Attaching the CMPs to your permission set triggers a one-time
+  re-provisioning of that permission set. This is expected and required.
+
+Parameters:
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: >
+      ARN of the Lambda execution role in your Lambda account.
+      Get this from the LambdaExecutionRoleArn output of infra/lambda.yaml.
+
+  AwsRegion:
+    Type: String
+    Default: us-east-1
+    Description: AWS Region where your Bedrock models are accessed.
+
+  # CUSTOMIZE: Add or remove model IDs as new model versions become available.
+  # Mirror any changes in lambda/handler.py (OPUS_MODEL_IDS / SONNET_MODEL_IDS).
+  # The seed policies here are inert until the Lambda's first run (they contain
+  # a placeholder condition that matches no user). The Lambda rewrites them on
+  # every run with the real list of users over their daily threshold.
+
+Resources:
+
+  # T1 — deny premium models (Opus family). Seeded with a placeholder condition
+  # that matches no user. The Lambda rewrites this on every run.
+  EnforcementT1Policy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: BedrockEnforcement-T1
+      Description: "Bedrock T1 spend-enforcement deny policy. Managed by the bedrock-spend-enforcement Lambda via CreatePolicyVersion."
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyModels
+            Effect: Deny
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:Converse
+              - bedrock:ConverseStream
+            Resource:
+              # foundation-model ARNs
+              - !Sub arn:aws:bedrock:${AwsRegion}::foundation-model/anthropic.claude-opus-4-5-20251101-v1:0
+              - !Sub arn:aws:bedrock:${AwsRegion}::foundation-model/anthropic.claude-opus-4-1-20250805-v1:0
+              # inference-profile ARNs (engineers invoke via cross-region profiles)
+              - arn:aws:bedrock:*:*:inference-profile/*.anthropic.claude-opus-4-5-20251101-v1:0
+              - arn:aws:bedrock:*:*:inference-profile/*.anthropic.claude-opus-4-1-20250805-v1:0
+            Condition:
+              StringEquals:
+                saml:sub: "__placeholder-no-user__"
+
+  # T2 — deny mid-tier models (Sonnet family).
+  EnforcementT2Policy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: BedrockEnforcement-T2
+      Description: "Bedrock T2 spend-enforcement deny policy. Managed by the bedrock-spend-enforcement Lambda via CreatePolicyVersion."
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyModels
+            Effect: Deny
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:Converse
+              - bedrock:ConverseStream
+            Resource:
+              - !Sub arn:aws:bedrock:${AwsRegion}::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0
+              - !Sub arn:aws:bedrock:${AwsRegion}::foundation-model/anthropic.claude-sonnet-4-20250514-v1:0
+              - !Sub arn:aws:bedrock:${AwsRegion}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0
+              - !Sub arn:aws:bedrock:${AwsRegion}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0:28k
+              - !Sub arn:aws:bedrock:${AwsRegion}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0:200k
+              - arn:aws:bedrock:*:*:inference-profile/*.anthropic.claude-sonnet-4-5-20250929-v1:0
+              - arn:aws:bedrock:*:*:inference-profile/*.anthropic.claude-sonnet-4-20250514-v1:0
+              - arn:aws:bedrock:*:*:inference-profile/*.anthropic.claude-3-sonnet-20240229-v1:0
+            Condition:
+              StringEquals:
+                saml:sub: "__placeholder-no-user__"
+
+  EnforcementRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: bedrock-spend-enforcement
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref LambdaExecutionRoleArn
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: manage-bedrock-enforcement-cmps
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:ListPolicyVersions
+                  - iam:CreatePolicyVersion
+                  - iam:DeletePolicyVersion
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:policy/BedrockEnforcement-*
+
+Outputs:
+  EnforcementRoleArn:
+    Value: !GetAtt EnforcementRole.Arn
+    Description: The role the Lambda assumes to manage CMPs in this account
+  T1PolicyArn:
+    Value: !Ref EnforcementT1Policy
+    Description: Attach to your IAM Identity Center permission set by name — BedrockEnforcement-T1
+  T2PolicyArn:
+    Value: !Ref EnforcementT2Policy
+    Description: Attach to your IAM Identity Center permission set by name — BedrockEnforcement-T2
