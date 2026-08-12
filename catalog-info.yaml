@@ -1,0 +1,22 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: bedrock-spend-enforcement
+  description: "Tiered, real-time spend enforcement for Amazon Bedrock using IAM Customer Managed Policies, an Athena cost view, and Slack notifications."
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+    sonarqube.org/project-key: "com.jamf.infrastructure:bedrock-spend-enforcement"
+  tags:
+  - aws
+  - bedrock
+  - iam
+  - ai
+  - athena
+  - cost-management
+  - finops
+  - cloud-formation
+spec:
+  type: tooling
+  lifecycle: experimental
+  owner: cloud-cornerstones
+  system: finops-automation
