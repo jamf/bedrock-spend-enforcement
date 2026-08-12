@@ -69,7 +69,6 @@ def test_sends_warn_dm_on_first_cross(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sends a warn DM when user first crosses 70% with no prior notifications."""
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
     with patch("notifier.send_dm") as mock_dm, \
-         patch("notifier.get_address_by_username", return_value="Sir"), \
          patch("notifier.spend_warning_text", return_value="warn text"):
         result = _notify_if_new_tier("alice", 105.0, 150.0, set())
     mock_dm.assert_called_once_with("alice", "warn text")
@@ -80,7 +79,6 @@ def test_sends_t1_and_warn_when_jumping_to_t1(monkeypatch: pytest.MonkeyPatch) -
     """Sends both warn and t1 DMs when user jumps straight to 80% with no prior notifications."""
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
     with patch("notifier.send_dm") as mock_dm, \
-         patch("notifier.get_address_by_username", return_value="Sir"), \
          patch("notifier.spend_warning_text", return_value="warn text"), \
          patch("notifier.t1_blocked_text", return_value="t1 text"):
         result = _notify_if_new_tier("alice", 125.0, 150.0, set())
@@ -92,8 +90,7 @@ def test_sends_t1_and_warn_when_jumping_to_t1(monkeypatch: pytest.MonkeyPatch) -
 def test_no_duplicate_warn_dm(monkeypatch: pytest.MonkeyPatch) -> None:
     """Does not resend warn DM if already notified."""
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-    with patch("notifier.send_dm") as mock_dm, \
-         patch("notifier.get_address_by_username", return_value="Sir"):
+    with patch("notifier.send_dm") as mock_dm:
         result = _notify_if_new_tier("alice", 110.0, 150.0, {"warn"})
     mock_dm.assert_not_called()
     assert result == {"warn"}
@@ -103,7 +100,6 @@ def test_sends_t1_when_warn_already_sent(monkeypatch: pytest.MonkeyPatch) -> Non
     """Only sends t1 DM when warn was already sent."""
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
     with patch("notifier.send_dm") as mock_dm, \
-         patch("notifier.get_address_by_username", return_value="Sir"), \
          patch("notifier.t1_blocked_text", return_value="t1 text"):
         result = _notify_if_new_tier("alice", 125.0, 150.0, {"warn"})
     mock_dm.assert_called_once_with("alice", "t1 text")
@@ -113,8 +109,7 @@ def test_sends_t1_when_warn_already_sent(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_resets_notified_tiers_below_70(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clears notified_tiers when spend drops back below 70% (daily reset)."""
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-    with patch("notifier.send_dm"), \
-         patch("notifier.get_address_by_username", return_value="Sir"):
+    with patch("notifier.send_dm"):
         result = _notify_if_new_tier("alice", 50.0, 150.0, {"warn", "t1"})
     assert result == set()
 
@@ -123,7 +118,6 @@ def test_all_three_tiers_sent_on_first_t2(monkeypatch: pytest.MonkeyPatch) -> No
     """Sends warn, t1, and t2 DMs when user jumps straight to 100% with no prior notifications."""
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
     with patch("notifier.send_dm") as mock_dm, \
-         patch("notifier.get_address_by_username", return_value="Sir"), \
          patch("notifier.spend_warning_text", return_value="warn"), \
          patch("notifier.t1_blocked_text", return_value="t1"), \
          patch("notifier.t2_blocked_text", return_value="t2"):
@@ -132,21 +126,11 @@ def test_all_three_tiers_sent_on_first_t2(monkeypatch: pytest.MonkeyPatch) -> No
     assert result == {"warn", "t1", "t2"}
 
 
-def test_looks_up_address_once_per_notification_batch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Address is looked up once per call, not once per tier DM sent."""
+def test_message_builders_called_with_no_address_argument(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier message builders are called with just (spend, limit) — no honorific/address parameter."""
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
     with patch("notifier.send_dm"), \
-         patch("notifier.get_address_by_username", return_value="Captain") as mock_lookup, \
          patch("notifier.spend_warning_text", return_value="w") as mock_warn, \
          patch("notifier.t1_blocked_text", return_value="t1"):
         _notify_if_new_tier("alice", 125.0, 150.0, set())
-    mock_lookup.assert_called_once_with("alice")
-    mock_warn.assert_called_once_with(125.0, 150.0, "Captain")
-
-
-def test_no_address_lookup_when_no_tier_crossed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Address lookup is skipped entirely when no new tier is crossed — saves a DynamoDB/Slack round trip."""
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-    with patch("notifier.get_address_by_username") as mock_lookup:
-        _notify_if_new_tier("alice", 110.0, 150.0, {"warn"})
-    mock_lookup.assert_not_called()
+    mock_warn.assert_called_once_with(125.0, 150.0)

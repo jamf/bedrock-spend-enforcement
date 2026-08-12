@@ -531,7 +531,7 @@ def _notify_if_new_tier(
     if not os.environ.get("SLACK_BOT_TOKEN"):
         return notified_tiers
 
-    from notifier import get_address_by_username, send_dm, spend_warning_text, t1_blocked_text, t2_blocked_text
+    from notifier import send_dm, spend_warning_text, t1_blocked_text, t2_blocked_text
 
     tier = calculate_notification_tier(spend_usd, limit)
 
@@ -541,14 +541,13 @@ def _notify_if_new_tier(
     new_tiers = notified_tiers.copy()
     crossed = _newly_crossed_tiers(spend_usd, limit, notified_tiers)
     if crossed:
-        address = get_address_by_username(person)
         for t in crossed:
             if t == "warn":
-                text = spend_warning_text(spend_usd, limit, address)
+                text = spend_warning_text(spend_usd, limit)
             elif t == "t1":
-                text = t1_blocked_text(spend_usd, limit, address)
+                text = t1_blocked_text(spend_usd, limit)
             else:
-                text = t2_blocked_text(spend_usd, limit, address)
+                text = t2_blocked_text(spend_usd, limit)
             send_dm(person, text)
             new_tiers.add(t)
 
