@@ -197,16 +197,3 @@ def send_dm(username: str, text: str) -> None:
         logger.exception("Slack rejected DM to %s (%s): %s", username, user_id, exc.response.get("error"))
     except Exception:
         logger.exception("Unexpected error sending DM to %s (%s)", username, user_id)
-
-
-def post_to_channel(channel_id: str, text: str) -> None:
-    """Post a message to a Slack channel by ID."""
-    from slack_sdk.errors import SlackApiError
-
-    try:
-        _slack_client().chat_postMessage(channel=channel_id, text=text)
-        logger.info("Posted to channel %s", channel_id)
-    except SlackApiError as exc:
-        logger.exception("Slack rejected post to channel %s: %s", channel_id, exc.response.get("error"))
-    except Exception:
-        logger.exception("Unexpected error posting to channel %s", channel_id)

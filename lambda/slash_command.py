@@ -749,11 +749,11 @@ def _parse_limit_command(
         _post_response_url(
             response_url,
             "Usage: `/bedrock-limit <username> <amount> [duration|never] [jira_ticket]`\n"
-            "Example: `/bedrock-limit andre.bernardo 300` (defaults to "
+            "Example: `/bedrock-limit jane.smith 300` (defaults to "
             f"{DEFAULT_LIMIT_EXPIRY_DAYS} days)\n"
-            "Example: `/bedrock-limit andre.bernardo 300 90d`\n"
-            "Example: `/bedrock-limit andre.bernardo 300 never`\n"
-            "Example: `/bedrock-limit andre.bernardo 300 30d TICKET-1234`",
+            "Example: `/bedrock-limit jane.smith 300 90d`\n"
+            "Example: `/bedrock-limit jane.smith 300 never`\n"
+            "Example: `/bedrock-limit jane.smith 300 30d TICKET-1234`",
         )
         return None
     username, amount, td, label, jira_ticket, error = _validate_limit_args(parts)

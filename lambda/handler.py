@@ -82,11 +82,6 @@ def calculate_required_denies(spend_usd: float, daily_limit: float) -> list[str]
         return []
 
 
-def _is_manually_blocked(user_id: str) -> bool:
-    """Return True if the user has an active manual block in the exceptions table."""
-    return _blocked_from_item(_read_item(EXCEPTIONS_TABLE, user_id))
-
-
 def calculate_notification_tier(spend_usd: float, daily_limit: float) -> str | None:
     """Return the highest tier the user has crossed, or None if below 70%.
 
@@ -170,7 +165,7 @@ def _wait_for_athena_query(client: _AthenaQueryClient, execution_id: str) -> Non
         time.sleep(2)
 
 
-_COST_VIEW_GROUP_COLUMNS = ["person", "model", "raw_model", "usage_type", "account_id", "arn"]
+_COST_VIEW_GROUP_COLUMNS = ["person", "model", "raw_model", "usage_type", "arn"]
 
 
 def _parse_cost_view_rows(pages: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -204,7 +199,7 @@ def _parse_cost_view_rows(pages: Iterable[dict[str, Any]]) -> list[dict[str, Any
 def _query_cost_view_rows() -> list[dict[str, Any]]:
     """Single Athena query backing every cost-view derivation below.
 
-    Grouped at (person, model, raw_model, usage_type, account_id, arn) — the finest
+    Grouped at (person, model, raw_model, usage_type, arn) — the finest
     grain any current consumer needs — with SUM(estimated_cost) and COUNT(*) per group.
     query_spend_by_person and query_unmapped_models both roll this single result up
     in Python instead of each re-scanning the view independently.
@@ -361,11 +356,6 @@ def _notified_tiers_from_item(item: dict[str, Any] | None) -> set[str]:
     return set()
 
 
-def get_user_limit(user_id: str) -> float:
-    """Return the user's custom daily limit, or DEFAULT_DAILY_LIMIT."""
-    return _limit_from_item(_read_item(EXCEPTIONS_TABLE, user_id))
-
-
 def _save_user_state(
     user_id: str,
     spend_usd: float,
@@ -383,11 +373,6 @@ def _save_user_state(
     if notified_tiers:
         item["notified_tiers"] = notified_tiers
     table.put_item(Item=item)
-
-
-def _get_notified_tiers(user_id: str) -> set[str]:
-    """Return the set of tier keys already notified for this user today."""
-    return _notified_tiers_from_item(_read_item(STATE_TABLE, user_id))
 
 
 # ── IAM policy version management ───────────────────────────────────────────────

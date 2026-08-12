@@ -1,3 +1,4 @@
+# Copyright 2026, Jamf Software, LLC
 import sys
 import os
 import json
@@ -8,52 +9,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import pytest
 from handler import (
-    write_shared_policy, update_shared_cmps, _save_user_state, get_user_limit,
+    write_shared_policy, update_shared_cmps, _save_user_state,
     _ensure_policy_version_slots,
     T1_POLICY_ARN, T2_POLICY_ARN, OPUS_KEYWORDS, DEFAULT_DAILY_LIMIT,
 )
-
-
-def test_get_user_limit_returns_custom() -> None:
-    """A user with a custom DynamoDB entry gets their configured limit."""
-    with patch("handler._dynamodb") as mock_ddb:
-        mock_table = MagicMock()
-        mock_ddb.return_value.Table.return_value = mock_table
-        mock_table.get_item.return_value = {"Item": {"daily_limit_usd": "300"}}
-        assert get_user_limit("alice") == pytest.approx(300.0)
-        mock_table.get_item.assert_called_once_with(Key={"user_id": "alice"})
-
-
-def test_get_user_limit_defaults_when_absent() -> None:
-    """A user with no DynamoDB entry gets the global default limit."""
-    with patch("handler._dynamodb") as mock_ddb:
-        mock_table = MagicMock()
-        mock_ddb.return_value.Table.return_value = mock_table
-        mock_table.get_item.return_value = {}
-        assert get_user_limit("alice") == DEFAULT_DAILY_LIMIT
-
-
-def test_get_user_limit_fails_closed_to_default_on_error() -> None:
-    """Lookup failure falls back to the default limit rather than dropping the user."""
-    with patch("handler._dynamodb") as mock_ddb:
-        mock_table = MagicMock()
-        mock_ddb.return_value.Table.return_value = mock_table
-        mock_table.get_item.side_effect = Exception("throttled")
-        assert get_user_limit("alice") == DEFAULT_DAILY_LIMIT
-
-
-def test_get_user_limit_defaults_when_item_has_no_limit(caplog: pytest.LogCaptureFixture) -> None:
-    """A block-only exceptions row (manual_block but no daily_limit_usd) returns the
-    default WITHOUT logging an error. Such rows are routine — a manual-block write
-    has no limit — so a missing daily_limit_usd is not an error path."""
-    import logging
-    with patch("handler._dynamodb") as mock_ddb:
-        mock_table = MagicMock()
-        mock_ddb.return_value.Table.return_value = mock_table
-        mock_table.get_item.return_value = {"Item": {"manual_block": True}}
-        with caplog.at_level(logging.ERROR, logger="root"):
-            assert get_user_limit("alice") == DEFAULT_DAILY_LIMIT
-        assert not caplog.records, "missing daily_limit_usd must not be logged as an error"
 
 
 def test_ensure_policy_version_slots_deletes_oldest_when_full() -> None:
@@ -298,17 +257,6 @@ def test_handler_read_error_still_enforces_on_spend(monkeypatch: pytest.MonkeyPa
     # Even though every read raised internally, alice is still enforced at T1+T2.
     assert "alice" in captured["t1"]
     assert "alice" in captured["t2"]
-
-
-def test_get_notified_tiers_returns_existing_set() -> None:
-    """Returns the stored notified_tiers set when the item exists."""
-    with patch("handler._dynamodb") as mock_ddb:
-        mock_table = MagicMock()
-        mock_ddb.return_value.Table.return_value = mock_table
-        mock_table.get_item.return_value = {"Item": {"notified_tiers": {"warn", "t1"}}}
-        from handler import _get_notified_tiers
-        result = _get_notified_tiers("alice")
-    assert result == {"warn", "t1"}
 
 
 # ── Pure derive helpers (M2: read each DynamoDB item once, derive many values) ──

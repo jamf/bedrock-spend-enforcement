@@ -171,7 +171,6 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:PutItem
-                  - dynamodb:Scan
                 Resource:
                   - !Ref StateDynamoTableArn
                   - !Ref ExceptionsDynamoTableArn
@@ -186,7 +185,6 @@ Resources:
                 Effect: Allow
                 Action:
                   - iam:CreatePolicyVersion
-                  - iam:GetPolicy
                   - iam:ListPolicyVersions
                   - iam:DeletePolicyVersion
                 Resource:

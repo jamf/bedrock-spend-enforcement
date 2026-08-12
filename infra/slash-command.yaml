@@ -85,7 +85,6 @@ Resources:
                 Effect: Allow
                 Action:
                   - dynamodb:PutItem
-                  - dynamodb:DeleteItem
                   - dynamodb:UpdateItem
                 Resource:
                   - !Ref ExceptionsDynamoTableArn

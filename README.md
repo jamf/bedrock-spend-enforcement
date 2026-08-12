@@ -326,8 +326,8 @@ templates line-by-line to answer "why does this Lambda need IAM access."
 | Athena | `athena:StartQueryExecution`, `athena:GetQueryExecution`, `athena:GetQueryResults` | Running the daily cost-view query (`EnforcementLambda`) and the view-manager custom resource's DDL (`athena.yaml`) |
 | Glue | `glue:GetTable`, `glue:GetPartitions`, `glue:GetDatabase`, `glue:CreateTable`, `glue:UpdateTable`, `glue:DeleteTable` | Athena's catalog reads; view create/update/delete during stack lifecycle |
 | S3 | `s3:GetObject`, `s3:PutObject`, `s3:GetBucketLocation`, `s3:ListBucket` | Reading Bedrock invocation logs; reading/writing Athena query results |
-| DynamoDB | `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:Scan`, `dynamodb:UpdateItem`, `dynamodb:DeleteItem` | Reading/writing per-user spend state and exceptions |
-| IAM | `iam:GetPolicy`, `iam:ListPolicyVersions`, `iam:CreatePolicyVersion`, `iam:DeletePolicyVersion` | Rewriting the two shared enforcement CMPs, scoped to `BedrockEnforcement-T1`/`-T2` only — this is what actually denies `bedrock:InvokeModel`/`InvokeModelWithResponseStream`/`Converse`/`ConverseStream` to over-budget users; the Lambda never calls Bedrock itself |
+| DynamoDB | `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:UpdateItem` | Reading/writing per-user spend state and exceptions |
+| IAM | `iam:ListPolicyVersions`, `iam:CreatePolicyVersion`, `iam:DeletePolicyVersion` | Rewriting the two shared enforcement CMPs, scoped to `BedrockEnforcement-T1`/`-T2` only — this is what actually denies `bedrock:InvokeModel`/`InvokeModelWithResponseStream`/`Converse`/`ConverseStream` to over-budget users; the Lambda never calls Bedrock itself |
 | CloudWatch | `cloudwatch:PutMetricData` (namespace `BedrockSpendEnforcement` only) | Emitting `PolicySizeOverflow` and `UnmappedModelSpend` metrics |
 | Lambda | `lambda:InvokeFunction` | Slash-command Lambda self-invoking async, and invoking the enforcement Lambda on-demand after an admin action |
 | Logs | `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents` | Standard Lambda execution logging (via the AWS-managed `AWSLambdaBasicExecutionRole`) |

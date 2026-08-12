@@ -1,3 +1,4 @@
+# Copyright 2026, Jamf Software, LLC
 import sys
 import os
 from typing import Any
@@ -22,7 +23,6 @@ def _row(
     model: str = "",
     raw_model: str = "",
     usage_type: str = "human",
-    account_id: str = "",
     arn: str = "",
     spend: float = 0.0,
     invocations: int = 1,
@@ -33,7 +33,6 @@ def _row(
         "model": model,
         "raw_model": raw_model,
         "usage_type": usage_type,
-        "account_id": account_id,
         "arn": arn,
         "spend": spend,
         "invocations": invocations,
@@ -44,13 +43,13 @@ def _row(
 
 def _athena_client_returning_cost_view_rows(rows: list[tuple[Any, ...]]) -> MagicMock:
     """Build a mock Athena client whose query SUCCEEDS and paginates `rows`,
-    where each row is (person, model, raw_model, usage_type, account_id, arn, spend, invocations)."""
+    where each row is (person, model, raw_model, usage_type, arn, spend, invocations)."""
     client = MagicMock()
     client.start_query_execution.return_value = {"QueryExecutionId": "qid-1"}
     client.get_query_execution.return_value = {
         "QueryExecution": {"Status": {"State": "SUCCEEDED"}}
     }
-    columns = ["person", "model", "raw_model", "usage_type", "account_id", "arn", "spend", "invocations"]
+    columns = ["person", "model", "raw_model", "usage_type", "arn", "spend", "invocations"]
     header = {"Data": [{"VarCharValue": c} for c in columns]}
     data_rows = [
         {"Data": [{"VarCharValue": str(v)} for v in row]} for row in rows
@@ -81,7 +80,7 @@ def test_cost_view_query_groups_by_all_dimensions() -> None:
     with patch("handler._athena", return_value=client):
         _query_cost_view_rows()
     query = client.start_query_execution.call_args[1]["QueryString"]
-    for col in ["person", "model", "raw_model", "usage_type", "account_id", "arn"]:
+    for col in ["person", "model", "raw_model", "usage_type", "arn"]:
         assert col in query
     assert "SUM(estimated_cost)" in query
     assert "COUNT(*)" in query
@@ -90,7 +89,7 @@ def test_cost_view_query_groups_by_all_dimensions() -> None:
 def test_cost_view_query_parses_rows() -> None:
     """Rows are returned as a list of dicts with spend as float and invocations as int."""
     client = _athena_client_returning_cost_view_rows(
-        [("alice", "Sonnet 5", "anthropic.claude-sonnet-5", "human", "acct-1", "arn:x", "12.5", "3")]
+        [("alice", "Sonnet 5", "anthropic.claude-sonnet-5", "human", "arn:x", "12.5", "3")]
     )
     with patch("handler._athena", return_value=client):
         rows = _query_cost_view_rows()
@@ -104,8 +103,8 @@ def test_cost_view_query_skips_unparseable_rows() -> None:
     """A row with a non-numeric spend is dropped, not fatal to the whole query."""
     client = _athena_client_returning_cost_view_rows(
         [
-            ("alice", "Sonnet 5", "x", "human", "acct", "arn:x", "NULL", "1"),
-            ("bob", "Sonnet 5", "x", "human", "acct", "arn:x", "5.0", "2"),
+            ("alice", "Sonnet 5", "x", "human", "arn:x", "NULL", "1"),
+            ("bob", "Sonnet 5", "x", "human", "arn:x", "5.0", "2"),
         ]
     )
     with patch("handler._athena", return_value=client):
@@ -149,10 +148,10 @@ def test_cost_view_query_handles_multiple_pages() -> None:
     client.get_query_execution.return_value = {
         "QueryExecution": {"Status": {"State": "SUCCEEDED"}}
     }
-    columns = ["person", "model", "raw_model", "usage_type", "account_id", "arn", "spend", "invocations"]
+    columns = ["person", "model", "raw_model", "usage_type", "arn", "spend", "invocations"]
     header = {"Data": [{"VarCharValue": c} for c in columns]}
-    row1 = {"Data": [{"VarCharValue": v} for v in ("alice", "Sonnet 5", "x", "human", "acct", "arn:x", "10.0", "1")]}
-    row2 = {"Data": [{"VarCharValue": v} for v in ("bob", "Sonnet 5", "x", "human", "acct", "arn:x", "20.0", "2")]}
+    row1 = {"Data": [{"VarCharValue": v} for v in ("alice", "Sonnet 5", "x", "human", "arn:x", "10.0", "1")]}
+    row2 = {"Data": [{"VarCharValue": v} for v in ("bob", "Sonnet 5", "x", "human", "arn:x", "20.0", "2")]}
     page1 = {"ResultSet": {"Rows": [header, row1]}}
     page2 = {"ResultSet": {"Rows": [row2]}}
     paginator = MagicMock()

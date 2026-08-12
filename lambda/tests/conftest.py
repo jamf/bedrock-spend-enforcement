@@ -1,3 +1,4 @@
+# Copyright 2026, Jamf Software, LLC
 """Shared test setup for lambda/tests.
 
 Two concerns are handled here, both needed before any test module can safely

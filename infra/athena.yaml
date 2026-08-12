@@ -50,9 +50,9 @@ Resources:
           projection.datehour.interval: "1"
           projection.datehour.interval.unit: HOURS
           classification: json
-          storage.location.template: !Sub "s3://${LogsBucket}/BedrockMetadataClean/AWSLogs/${AWS::AccountId}/BedrockModelInvocationLogs/us-east-1/${!datehour}/"
+          storage.location.template: !Sub "s3://${LogsBucket}/BedrockMetadataClean/AWSLogs/${AWS::AccountId}/BedrockModelInvocationLogs/${AWS::Region}/${!datehour}/"
         StorageDescriptor:
-          Location: !Sub "s3://${LogsBucket}/BedrockMetadataClean/AWSLogs/${AWS::AccountId}/BedrockModelInvocationLogs/us-east-1/"
+          Location: !Sub "s3://${LogsBucket}/BedrockMetadataClean/AWSLogs/${AWS::AccountId}/BedrockModelInvocationLogs/${AWS::Region}/"
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
@@ -149,10 +149,10 @@ Resources:
                   - glue:UpdateTable
                   - glue:DeleteTable
                 Resource:
-                  - !Sub "arn:aws:glue:us-east-1:${AWS::AccountId}:catalog"
-                  - !Sub "arn:aws:glue:us-east-1:${AWS::AccountId}:database/default"
-                  - !Sub "arn:aws:glue:us-east-1:${AWS::AccountId}:table/default/bedrocklogs_metadata_clean"
-                  - !Sub "arn:aws:glue:us-east-1:${AWS::AccountId}:table/default/bedrock_cost_today"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/default"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/default/bedrocklogs_metadata_clean"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/default/bedrock_cost_today"
 
   ViewManagerFunction:
     Type: AWS::Lambda::Function

@@ -32,7 +32,7 @@ Resources:
 Outputs:
   StateTableArn:
     Value: !GetAtt StateTable.Arn
-    Description: Pass this ARN as a parameter to the lambda stack (STATE_TABLE_ARN)
+    Description: Pass this ARN as a parameter to the lambda stack (StateDynamoTableArn)
   ExceptionsTableArn:
     Value: !GetAtt ExceptionsTable.Arn
-    Description: Pass this ARN as a parameter to the lambda stack (EXCEPTIONS_TABLE_ARN)
+    Description: Pass this ARN as a parameter to the lambda stack (ExceptionsDynamoTableArn)
