@@ -9,8 +9,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import pytest
 from handler import (
-    write_shared_policy, update_shared_cmps, _save_user_state,
-    _ensure_policy_version_slots, _batch_read_items,
+    write_shared_policy, update_shared_cmps, _build_state_item,
+    _ensure_policy_version_slots, _batch_read_items, _batch_write_items,
     T1_POLICY_ARN, T2_POLICY_ARN, OPUS_KEYWORDS,
 )
 
@@ -54,19 +54,56 @@ def test_write_shared_policy_emits_metric_on_oversize() -> None:
         assert kwargs["Namespace"] == "BedrockSpendEnforcement"
 
 
-def test_save_user_state_writes_audit_record() -> None:
-    """User state is written to DynamoDB as a Decimal (not a string)."""
-    with patch("handler._dynamodb") as mock_ddb:
-        mock_table = MagicMock()
-        mock_ddb.return_value.Table.return_value = mock_table
-        _save_user_state("alice", 125.0, ["opus"], {"t1"})
-        mock_table.put_item.assert_called_once()
-        item = mock_table.put_item.call_args[1]["Item"]
-        assert item["user_id"] == "alice"
-        assert item["active_denies"] == ["opus"]
-        assert float(item["spend_usd"]) == pytest.approx(125.0)
-        assert not isinstance(item["spend_usd"], str)
-        assert item["notified_tiers"] == {"t1"}
+def test_build_state_item_uses_decimal_spend() -> None:
+    """A state item's spend_usd is a Decimal (not a string) — required for DynamoDB numeric storage."""
+    item = _build_state_item("alice", 125.0, ["opus"], {"t1"})
+    assert item["user_id"] == "alice"
+    assert item["active_denies"] == ["opus"]
+    assert float(item["spend_usd"]) == pytest.approx(125.0)
+    assert not isinstance(item["spend_usd"], str)
+    assert item["notified_tiers"] == {"t1"}
+
+
+def test_build_state_item_omits_notified_tiers_when_empty() -> None:
+    """An empty notified_tiers set is omitted entirely, not written as an empty collection."""
+    item = _build_state_item("alice", 50.0, [], set())
+    assert "notified_tiers" not in item
+
+
+def test_batch_write_items_chunks_at_25() -> None:
+    """More than 25 items triggers two batch_write_item calls, not one oversized request."""
+    with patch("handler._dynamodb") as mock_dynamodb_factory:
+        mock_dynamodb_factory.return_value.batch_write_item.return_value = {}
+        items = [{"user_id": f"user{i}"} for i in range(30)]
+        _batch_write_items("t", items)
+    calls = mock_dynamodb_factory.return_value.batch_write_item.call_args_list
+    assert len(calls) == 2
+    assert len(calls[0].kwargs["RequestItems"]["t"]) == 25
+    assert len(calls[1].kwargs["RequestItems"]["t"]) == 5
+
+
+def test_batch_write_items_retries_unprocessed_items() -> None:
+    """UnprocessedItems from a throttled batch is retried until it's empty."""
+    with patch("handler._dynamodb") as mock_dynamodb_factory:
+        mock_dynamodb_factory.return_value.batch_write_item.side_effect = [
+            {"UnprocessedItems": {"t": [{"PutRequest": {"Item": {"user_id": "bob"}}}]}},
+            {},
+        ]
+        _batch_write_items("t", [{"user_id": "alice"}, {"user_id": "bob"}])
+    assert mock_dynamodb_factory.return_value.batch_write_item.call_count == 2
+
+
+def test_batch_write_items_fails_soft_on_exception() -> None:
+    """A batch write failure is logged and swallowed — must not raise and abort the run."""
+    with patch("handler._dynamodb", side_effect=Exception("throttled")):
+        _batch_write_items("t", [{"user_id": "alice"}])  # should not raise
+
+
+def test_batch_write_items_empty_input_skips_aws_call() -> None:
+    """An empty items list makes no DynamoDB call at all."""
+    with patch("handler._dynamodb") as mock_dynamodb_factory:
+        _batch_write_items("t", [])
+    mock_dynamodb_factory.assert_not_called()
 
 
 def test_write_shared_policy_skips_if_too_large() -> None:
@@ -230,7 +267,7 @@ def test_handler_builds_tier_lists_and_writes_cmps() -> None:
     with patch("handler._query_cost_view_rows", return_value=[]), \
          patch("handler.query_spend_by_person", return_value=spend), \
          patch("handler._batch_read_items", return_value={}), \
-         patch("handler._save_user_state"), \
+         patch("handler._batch_write_items"), \
          patch("handler.boto3.client", return_value=MagicMock()), \
          patch("handler.update_shared_cmps", side_effect=fake_update):
         from handler import handler
@@ -260,17 +297,19 @@ def test_handler_per_user_exception_does_not_abort(monkeypatch: pytest.MonkeyPat
     captured: dict[str, Any] = {}
     spend = {"alice": 130.0, "bob": 160.0}
 
-    def fake_save(user_id: str, *args: Any, **kwargs: Any) -> None:
+    def fake_notify(user_id: str, *args: Any, **kwargs: Any) -> set[str]:
         """Raise for alice (mid-iteration failure), succeed for bob."""
         if user_id == "alice":
-            raise RuntimeError("state write failed")
+            raise RuntimeError("notify failed")
+        return set()
 
     # alice is at T1 ($130 >= 80% of $150), bob is at T2 ($160 >= $150).
     with patch("handler._query_cost_view_rows", return_value=[]), \
          patch("handler.query_spend_by_person", return_value=spend), \
          patch("handler._batch_read_items", return_value={}), \
          patch("handler.boto3.client", return_value=MagicMock()), \
-         patch("handler._save_user_state", side_effect=fake_save), \
+         patch("handler._notify_if_new_tier", side_effect=fake_notify), \
+         patch("handler._batch_write_items"), \
          patch("handler.update_shared_cmps", side_effect=lambda t1, t2, iam, **kw: captured.update(t1=t1, t2=t2) or []):
         from handler import handler
         handler({}, None)
@@ -297,7 +336,7 @@ def test_handler_read_error_still_enforces_on_spend(monkeypatch: pytest.MonkeyPa
          patch("handler.query_spend_by_person", return_value=spend), \
          patch("handler._dynamodb", side_effect=Exception("throttled")), \
          patch("handler.boto3.client", return_value=MagicMock()), \
-         patch("handler._save_user_state"), \
+         patch("handler._batch_write_items"), \
          patch("handler.update_shared_cmps", side_effect=lambda t1, t2, iam, **kw: captured.update(t1=t1, t2=t2) or []):
         from handler import handler
         handler({}, None)

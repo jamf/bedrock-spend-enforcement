@@ -331,7 +331,7 @@ templates line-by-line to answer "why does this Lambda need IAM access."
 | Athena | `athena:StartQueryExecution`, `athena:GetQueryExecution`, `athena:GetQueryResults` | Running the daily cost-view query (`EnforcementLambda`) and the view-manager custom resource's DDL (`athena.yaml`) |
 | Glue | `glue:GetTable`, `glue:GetPartitions`, `glue:GetDatabase`, `glue:CreateTable`, `glue:UpdateTable`, `glue:DeleteTable` | Athena's catalog reads; view create/update/delete during stack lifecycle |
 | S3 | `s3:GetObject`, `s3:PutObject`, `s3:GetBucketLocation`, `s3:ListBucket` | Reading Bedrock invocation logs; reading/writing Athena query results |
-| DynamoDB | `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:BatchGetItem` | Reading/writing per-user spend state and exceptions (batched via `_batch_read_items`) |
+| DynamoDB | `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:BatchGetItem`, `dynamodb:BatchWriteItem` | Reading/writing per-user spend state and exceptions (batched via `_batch_read_items`/`_batch_write_items`) |
 | IAM | `iam:ListPolicyVersions`, `iam:CreatePolicyVersion`, `iam:DeletePolicyVersion` | Rewriting the two shared enforcement CMPs, scoped to `BedrockEnforcement-T1`/`-T2` only — this is what actually denies `bedrock:InvokeModel`/`InvokeModelWithResponseStream`/`Converse`/`ConverseStream` to over-budget users; the Lambda never calls Bedrock itself |
 | CloudWatch | `cloudwatch:PutMetricData` (namespace `BedrockSpendEnforcement` only) | Emitting `PolicySizeOverflow` and `UnmappedModelSpend` metrics |
 | Lambda | `lambda:InvokeFunction` | Slash-command Lambda self-invoking async, and invoking the enforcement Lambda on-demand after an admin action |
@@ -365,12 +365,12 @@ deployer role/user needs before running the commands in
   a run that's still finishing when the next 15-minute schedule fires could
   race a fresher run and overwrite correct data with stale data (e.g. undoing
   a just-happened daily reset). `handler.py` also batches its per-person
-  DynamoDB reads via `_batch_read_items` instead of two `get_item` calls per
-  person, to keep runs fast enough that overlap stays unlikely as your user
-  count grows. `handler()` emits a `TIMING` log line per phase
-  (`athena_and_parse`, `batch_reads`, `per_person_loop`, `cmp_writes`,
-  `total`) — grep CloudWatch Logs for `TIMING` if a run ever gets slow enough
-  to investigate.
+  DynamoDB reads and writes — `_batch_read_items`/`_batch_write_items` instead
+  of a `get_item` and a `put_item` per person — to keep runs fast enough that
+  overlap stays unlikely as your user count grows. `handler()` emits a
+  `TIMING` log line per phase (`athena_and_parse`, `batch_reads`,
+  `per_person_loop`, `state_writes`, `cmp_writes`, `total`) — grep CloudWatch
+  Logs for `TIMING` if a run ever gets slow enough to investigate.
 - **IAM policy version limit.** IAM caps a managed policy at 5 versions.
   `handler.py`'s `_ensure_policy_version_slots` checks the version count
   before every write and deletes the oldest non-default version if the
