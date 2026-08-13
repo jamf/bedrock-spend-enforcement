@@ -171,6 +171,7 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:PutItem
+                  - dynamodb:BatchGetItem
                 Resource:
                   - !Ref StateDynamoTableArn
                   - !Ref ExceptionsDynamoTableArn
