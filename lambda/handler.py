@@ -307,6 +307,47 @@ def _read_item(table_name: str, user_id: str) -> dict[str, Any]:
         return {}
 
 
+def _batch_read_items(table_name: str, user_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch many items by user_id via batch_get_item, chunked at DynamoDB's 100-key limit.
+
+    Replaces one get_item per user (2 sequential round-trips per person in the
+    enforcement loop) with a handful of batched calls — at a few hundred users
+    that's a couple of round-trips instead of several hundred, which matters
+    because a run that's still reading state when the next 15-minute schedule
+    fires risks two overlapping invocations racing to write the same CMPs (see
+    ReservedConcurrentExecutions in infra/lambda.yaml, which makes that race
+    structurally impossible regardless of read latency — this function is the
+    other half: keep runs fast enough that overlap is unlikely in the first
+    place).
+
+    A user_id missing from the result (not found, or its whole chunk failed) is
+    indistinguishable from a miss to every caller — same fail-closed contract as
+    _read_item: a lookup failure must not drop a user from enforcement, so a
+    chunk-level exception is logged and skipped rather than raised.
+    """
+    result: dict[str, dict[str, Any]] = {}
+    unique_ids = list(dict.fromkeys(user_ids))
+    for i in range(0, len(unique_ids), 100):
+        chunk = unique_ids[i : i + 100]
+        try:
+            request: dict[str, Any] = {table_name: {"Keys": [{"user_id": uid} for uid in chunk]}}
+            dynamodb = _dynamodb()
+            # UnprocessedKeys is DynamoDB's own partial-throttle signal — retry only
+            # those, not the whole chunk, and give up after a bounded number of tries.
+            for _ in range(5):
+                response = dynamodb.batch_get_item(RequestItems=request)
+                for item in response.get("Responses", {}).get(table_name, []):
+                    result[item["user_id"]] = item
+                request = response.get("UnprocessedKeys") or {}
+                if not request:
+                    break
+            else:
+                logger.error("%s batch_get_item: gave up on UnprocessedKeys after 5 tries", table_name)
+        except Exception:
+            logger.exception("%s batch lookup failed for a chunk of %d users", table_name, len(chunk))
+    return result
+
+
 def _limit_expired(item: dict[str, Any]) -> bool:
     """Return True if item's limit_expires_at has passed or is malformed. Absent means never expires.
 
@@ -540,19 +581,49 @@ def _notify_if_new_tier(
 
 
 def handler(event: dict[str, Any], context: object) -> None:
-    """Lambda entry point: query today's spend, then rewrite enforcement CMPs."""
+    """Lambda entry point: query today's spend, then rewrite enforcement CMPs.
+
+    Emits a TIMING log line per phase (athena_and_parse, batch_reads,
+    per_person_loop, cmp_writes, total). If a run ever gets slow enough that
+    the next 15-minute schedule fires before it finishes, EventBridge's
+    default async retry can stack a second invocation on top of a
+    still-running one — whichever finishes LAST would win the CMP write, not
+    whichever had the freshest spend window, silently undoing a correct run
+    with stale data. ReservedConcurrentExecutions in infra/lambda.yaml makes
+    that race structurally impossible regardless of latency; these logs are
+    for diagnosing latency itself before it gets that far — grep CloudWatch
+    Logs for "TIMING" to see where a slow run actually spent its time.
+    """
+    run_start = time.monotonic()
     cost_view_rows = _query_cost_view_rows()
     spend_by_person = query_spend_by_person(cost_view_rows)
     _check_unmapped_models(cost_view_rows)
+    logger.info(
+        "TIMING athena_and_parse=%.1fs rows=%d persons=%d",
+        time.monotonic() - run_start, len(cost_view_rows), len(spend_by_person),
+    )
     iam_client = boto3.client("iam")
 
     t1_users: list[str] = []
     t2_users: list[str] = []
 
+    # Batched up front instead of two get_item calls per person inside the loop —
+    # at a few hundred people that's the difference between a couple of
+    # round-trips and several hundred sequential ones. See _batch_read_items.
+    persons = list(spend_by_person.keys())
+    batch_read_start = time.monotonic()
+    exception_items = _batch_read_items(EXCEPTIONS_TABLE, persons)
+    state_items = _batch_read_items(STATE_TABLE, persons)
+    logger.info(
+        "TIMING batch_reads=%.1fs persons=%d", time.monotonic() - batch_read_start, len(persons)
+    )
+
+    loop_start = time.monotonic()
+    notify_count = 0
     for person, spend_usd in spend_by_person.items():
         try:
-            exc_item = _read_item(EXCEPTIONS_TABLE, person)
-            state_item = _read_item(STATE_TABLE, person)
+            exc_item = exception_items.get(person, {})
+            state_item = state_items.get(person, {})
 
             limit = _limit_from_item(exc_item)
             if _blocked_from_item(exc_item):
@@ -566,10 +637,17 @@ def handler(event: dict[str, Any], context: object) -> None:
 
             notified_tiers_before = _notified_tiers_from_item(state_item)
             notified_tiers_after = _notify_if_new_tier(person, spend_usd, limit, notified_tiers_before)
+            if notified_tiers_after != notified_tiers_before:
+                notify_count += 1
             _save_user_state(person, spend_usd, required_denies, notified_tiers_after)
         except Exception as exc:
             logger.error("Error processing user %s: %s", person, exc, exc_info=True)
+    logger.info(
+        "TIMING per_person_loop=%.1fs persons=%d dms_sent=%d",
+        time.monotonic() - loop_start, len(spend_by_person), notify_count,
+    )
 
+    cmp_write_start = time.monotonic()
     size_warnings = update_shared_cmps(t1_users, t2_users, iam_client)
     for w in size_warnings:
         logger.warning(
@@ -579,3 +657,5 @@ def handler(event: dict[str, Any], context: object) -> None:
             w["doc_size"],
             w["user_count"],
         )
+    logger.info("TIMING cmp_writes=%.1fs", time.monotonic() - cmp_write_start)
+    logger.info("TIMING total=%.1fs", time.monotonic() - run_start)

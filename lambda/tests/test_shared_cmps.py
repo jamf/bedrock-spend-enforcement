@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import pytest
 from handler import (
     write_shared_policy, update_shared_cmps, _save_user_state,
-    _ensure_policy_version_slots,
+    _ensure_policy_version_slots, _batch_read_items,
     T1_POLICY_ARN, T2_POLICY_ARN, OPUS_KEYWORDS,
 )
 
@@ -161,6 +161,54 @@ def test_update_shared_cmps_t2_runs_even_if_t1_fails() -> None:
     assert mock_iam.create_policy_version.call_count == 2
 
 
+def test_batch_read_items_empty_input_short_circuits() -> None:
+    """No user_ids means no DynamoDB call at all, not a zero-key batch_get_item."""
+    with patch("handler._dynamodb") as mock_dynamodb_factory:
+        result = _batch_read_items("some-table", [])
+    mock_dynamodb_factory.assert_not_called()
+    assert result == {}
+
+
+def test_batch_read_items_chunks_at_100() -> None:
+    """More than 100 user_ids splits into multiple batch_get_item calls."""
+    user_ids = [f"user{i}" for i in range(150)]
+    mock_dynamodb = MagicMock()
+    mock_dynamodb.batch_get_item.return_value = {"Responses": {"t": []}, "UnprocessedKeys": {}}
+    with patch("handler._dynamodb", return_value=mock_dynamodb):
+        _batch_read_items("t", user_ids)
+    assert mock_dynamodb.batch_get_item.call_count == 2
+    first_chunk_keys = mock_dynamodb.batch_get_item.call_args_list[0].kwargs["RequestItems"]["t"]["Keys"]
+    second_chunk_keys = mock_dynamodb.batch_get_item.call_args_list[1].kwargs["RequestItems"]["t"]["Keys"]
+    assert len(first_chunk_keys) == 100
+    assert len(second_chunk_keys) == 50
+
+
+def test_batch_read_items_retries_unprocessed_keys() -> None:
+    """UnprocessedKeys from one call are retried, not the whole chunk from scratch."""
+    mock_dynamodb = MagicMock()
+    mock_dynamodb.batch_get_item.side_effect = [
+        {
+            "Responses": {"t": [{"user_id": "alice", "spend_usd": "1"}]},
+            "UnprocessedKeys": {"t": {"Keys": [{"user_id": "bob"}]}},
+        },
+        {"Responses": {"t": [{"user_id": "bob", "spend_usd": "2"}]}, "UnprocessedKeys": {}},
+    ]
+    with patch("handler._dynamodb", return_value=mock_dynamodb):
+        result = _batch_read_items("t", ["alice", "bob"])
+    assert mock_dynamodb.batch_get_item.call_count == 2
+    assert result["alice"]["spend_usd"] == "1"
+    assert result["bob"]["spend_usd"] == "2"
+
+
+def test_batch_read_items_fails_closed_on_exception() -> None:
+    """A DynamoDB error for a chunk is logged and skipped, never raised — same
+    fail-closed contract as _read_item, so a lookup failure can't drop a user
+    from enforcement."""
+    with patch("handler._dynamodb", side_effect=Exception("throttled")):
+        result = _batch_read_items("t", ["alice", "bob"])
+    assert result == {}
+
+
 def test_handler_builds_tier_lists_and_writes_cmps() -> None:
     """Handler correctly assigns users to T1/T2 tier lists based on spend vs limit."""
     captured: dict[str, Any] = {}
@@ -181,7 +229,7 @@ def test_handler_builds_tier_lists_and_writes_cmps() -> None:
     }
     with patch("handler._query_cost_view_rows", return_value=[]), \
          patch("handler.query_spend_by_person", return_value=spend), \
-         patch("handler._read_item", return_value={}), \
+         patch("handler._batch_read_items", return_value={}), \
          patch("handler._save_user_state"), \
          patch("handler.boto3.client", return_value=MagicMock()), \
          patch("handler.update_shared_cmps", side_effect=fake_update):
@@ -220,7 +268,7 @@ def test_handler_per_user_exception_does_not_abort(monkeypatch: pytest.MonkeyPat
     # alice is at T1 ($130 >= 80% of $150), bob is at T2 ($160 >= $150).
     with patch("handler._query_cost_view_rows", return_value=[]), \
          patch("handler.query_spend_by_person", return_value=spend), \
-         patch("handler._read_item", return_value={}), \
+         patch("handler._batch_read_items", return_value={}), \
          patch("handler.boto3.client", return_value=MagicMock()), \
          patch("handler._save_user_state", side_effect=fake_save), \
          patch("handler.update_shared_cmps", side_effect=lambda t1, t2, iam, **kw: captured.update(t1=t1, t2=t2) or []):
@@ -236,15 +284,15 @@ def test_handler_per_user_exception_does_not_abort(monkeypatch: pytest.MonkeyPat
 
 def test_handler_read_error_still_enforces_on_spend(monkeypatch: pytest.MonkeyPatch) -> None:
     """A DynamoDB read error must NOT drop a user from enforcement (fail-closed):
-    the real _read_item swallows the error and returns {}, so the user is still
-    denied based on spend against the default limit."""
+    the real _batch_read_items swallows the error and returns {}, so the user
+    is still denied based on spend against the default limit."""
     monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
     captured: dict[str, Any] = {}
     # well over the $150 default → T2
     spend = {"alice": 200.0}
 
-    # Patch _dynamodb (one layer below _read_item) so the REAL _read_item runs
-    # and exercises its internal try/except fail-soft path.
+    # Patch _dynamodb (one layer below _batch_read_items) so the REAL
+    # _batch_read_items runs and exercises its internal try/except fail-soft path.
     with patch("handler._query_cost_view_rows", return_value=[]), \
          patch("handler.query_spend_by_person", return_value=spend), \
          patch("handler._dynamodb", side_effect=Exception("throttled")), \

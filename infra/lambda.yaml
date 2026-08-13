@@ -208,6 +208,16 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 300
       MemorySize: 256
+      # Defense-in-depth against overlapping invocations racing to write the shared
+      # T1/T2 CMPs. If a run ever takes long enough that the next 15-minute
+      # schedule fires before it finishes, EventBridge's default async retry can
+      # stack a second invocation on top of a still-running one — whichever
+      # finishes LAST wins the CMP write, not whichever had the freshest spend
+      # window, silently undoing a correct run with stale data. Capping
+      # concurrency at 1 makes that race impossible regardless of how slow a run
+      # gets; see _batch_read_items in handler.py for what keeps runs fast in
+      # the first place.
+      ReservedConcurrentExecutions: 1
       Code:
         S3Bucket: !Ref LambdaCodeBucket
         S3Key: !Ref LambdaZipKey

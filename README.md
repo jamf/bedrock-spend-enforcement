@@ -360,6 +360,17 @@ deployer role/user needs before running the commands in
 
 ## Troubleshooting
 
+- **Run overlap at scale.** `EnforcementLambda` sets `ReservedConcurrentExecutions: 1`,
+  so two overlapping runs can never both write the CMPs — without that guard,
+  a run that's still finishing when the next 15-minute schedule fires could
+  race a fresher run and overwrite correct data with stale data (e.g. undoing
+  a just-happened daily reset). `handler.py` also batches its per-person
+  DynamoDB reads via `_batch_read_items` instead of two `get_item` calls per
+  person, to keep runs fast enough that overlap stays unlikely as your user
+  count grows. `handler()` emits a `TIMING` log line per phase
+  (`athena_and_parse`, `batch_reads`, `per_person_loop`, `cmp_writes`,
+  `total`) — grep CloudWatch Logs for `TIMING` if a run ever gets slow enough
+  to investigate.
 - **IAM policy version limit.** IAM caps a managed policy at 5 versions.
   `handler.py`'s `_ensure_policy_version_slots` checks the version count
   before every write and deletes the oldest non-default version if the
