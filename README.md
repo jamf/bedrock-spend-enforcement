@@ -210,6 +210,11 @@ This is why lambda.yaml must be deployed before athena.yaml, even though
 alphabetically athena comes first: athena.yaml's `AthenaResultsBucket`
 parameter has no default and must be the bucket lambda.yaml just created.
 
+The view's SQL is embedded in this template (CloudFormation can't include an
+external file inline) — [`sql/bedrock_cost_today.sql`](sql/bedrock_cost_today.sql)
+carries the identical query as a plain, easier-to-read/copy reference if you
+want to review or adapt the pricing logic without digging through YAML.
+
 ### 4. `infra/slash-command.yaml` — Slack slash commands and interactivity
 
 Uses the same Lambda zip as step 2 (it contains `slash_command.py` too).
@@ -431,6 +436,49 @@ Two things were cut:
   changes out gradually across many AWS accounts before they reach every
   account. This sample deploys into a single account with no staging
   mechanism, since a reference implementation doesn't need one.
+
+## Going further: separate Bedrock/Identity Center account
+
+This sample assumes your IAM Identity Center users and your Bedrock workloads
+live in the same AWS account, which is the common case and why everything
+here deploys with a single set of credentials and no cross-account trust.
+
+If your setup instead has Identity Center (and the `BedrockEnforcement-T1`/
+`-T2` policies) in a different account than the one running this Lambda,
+extend rather than restructure:
+
+1. In the account where Identity Center lives, create an IAM role that trusts
+   this Lambda's execution role (`LambdaExecutionRoleArn`, from
+   `lambda.yaml`'s output) and grants `iam:ListPolicyVersions`,
+   `iam:CreatePolicyVersion`, `iam:DeletePolicyVersion`, scoped to
+   `arn:aws:iam::<that-account-id>:policy/BedrockEnforcement-*`.
+2. In `handler.py`, wrap the plain `boto3.client("iam")` call with an
+   `sts.assume_role()` call against that new role's ARN before
+   `update_shared_cmps` runs, and point `T1_POLICY_ARN`/`T2_POLICY_ARN` at
+   the other account's ID instead of resolving the Lambda's own account via
+   `get_caller_identity()`.
+3. Everything else — the Athena view, DynamoDB tables, Slack notifications —
+   stays exactly as-is, since none of it touches IAM directly.
+
+This is additive: nothing above requires removing or rearchitecting what's
+already deployed, so it's safe to start with the single-account default and
+add the cross-account hop later only if you actually need it.
+
+## Customization reference
+
+Everything you're likely to want to change for your own environment, in one
+place — cross-referenced to where else in this README each one is explained.
+
+| What | Where | Notes |
+|---|---|---|
+| Per-token pricing rates | `infra/athena.yaml` (embedded SQL) and `sql/bedrock_cost_today.sql` (reference copy) | Verify against [Bedrock's pricing page](https://aws.amazon.com/bedrock/pricing/) for your Region before relying on these numbers — see [Troubleshooting](#troubleshooting)'s `UnmappedModelSpend` note |
+| Model classification (which model IDs map to which display name) | Same two files, the first `CASE` expression | Add a `WHEN modelId LIKE '...'` branch for any new model; unmapped models fall back to the highest-priced tier rather than $0 |
+| Daily reset hour (default: 04:00 UTC) | Same two files, the `bounds` CTE's two `INTERVAL '4' HOUR` references | Change both occurrences together |
+| Default daily budget (`$150`) | `lambda/handler.py`, `DEFAULT_DAILY_LIMIT` | Per-user overrides come from the exceptions table via `/bedrock-limit`, regardless of this default |
+| Tier thresholds (70% warn / 80% deny Opus / 100% deny Opus+Sonnet) | `lambda/handler.py`, `T0_THRESHOLD_RATIO` / `T1_THRESHOLD_RATIO` (100% is hardcoded, not a named constant) | See [Tiered thresholds](#tiered-thresholds) |
+| Which models each tier denies | `lambda/handler.py`, `OPUS_KEYWORDS` / `SONNET_KEYWORDS` | Keyword-matched against model IDs when building each CMP's `Resource` list — add a keyword rather than an exact model ID so new dated model versions are covered automatically |
+| Human vs. service-account username pattern | `lambda/handler.py`'s `_HUMAN_PATTERN`, and the matching regex in the SQL's `usage_type` classification | Both assume a `firstname.lastname` SSO username convention — adjust if yours differs |
+| IAM policy size alarm thresholds (80%/95% of the 6,144-byte cap) | `lambda/handler.py`, `POLICY_SIZE_WARN_RATIO` / `POLICY_SIZE_CRITICAL_RATIO` | See the `PolicySizeOverflow` note in [Troubleshooting](#troubleshooting) |
 
 ## Getting help
 

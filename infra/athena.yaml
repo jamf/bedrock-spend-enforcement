@@ -9,6 +9,11 @@ Description: >
     - default.bedrock_cost_today  (Athena view: per-user usage and estimated
                                     cost over a rolling ~24h window)
 
+  The view's SQL is embedded below (CloudFormation can't include an external
+  file inline). sql/bedrock_cost_today.sql carries the identical query as a
+  read-only, easier-to-review reference — keep both in sync and bump
+  ViewVersion below if you change either.
+
 Parameters:
   AthenaResultsBucket:
     Type: String
