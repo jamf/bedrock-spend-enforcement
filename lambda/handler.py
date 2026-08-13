@@ -397,14 +397,15 @@ def _notified_tiers_from_item(item: dict[str, Any] | None) -> set[str]:
     return set()
 
 
-def _save_user_state(
+def _build_state_item(
     user_id: str,
     spend_usd: float,
     active_denies: list[str],
     notified_tiers: set[str],
-) -> None:
-    """Persist per-user spend snapshot."""
-    table = _dynamodb().Table(STATE_TABLE)
+) -> dict[str, Any]:
+    """Build one person's state-table item. Pure — no I/O — so the per-person
+    loop can build items without writing them one at a time; see
+    _batch_write_items for the actual persistence."""
     item: dict[str, Any] = {
         "user_id": user_id,
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -413,7 +414,40 @@ def _save_user_state(
     }
     if notified_tiers:
         item["notified_tiers"] = notified_tiers
-    table.put_item(Item=item)
+    return item
+
+
+def _batch_write_items(table_name: str, items: list[dict[str, Any]]) -> None:
+    """Write many items via batch_write_item, chunked at DynamoDB's 25-item limit.
+
+    Mirrors _batch_read_items: UnprocessedItems (DynamoDB's partial-throttle
+    signal) is retried up to 5 times per chunk; a chunk that still fails after
+    that, or raises outright, is logged and dropped rather than raising —
+    those people's state simply isn't refreshed this run and self-corrects
+    next run, same fail-soft contract as every other DynamoDB helper here.
+    """
+    if not items:
+        return
+    for i in range(0, len(items), 25):
+        chunk = items[i : i + 25]
+        try:
+            request: dict[str, Any] = {
+                table_name: [{"PutRequest": {"Item": item}} for item in chunk]
+            }
+            dynamodb = _dynamodb()
+            for _ in range(5):
+                response = dynamodb.batch_write_item(RequestItems=request)
+                request = response.get("UnprocessedItems") or {}
+                if not request:
+                    break
+            else:
+                logger.error(
+                    "%s batch_write_item: gave up on UnprocessedItems after 5 tries "
+                    "(%d items in this chunk not persisted)",
+                    table_name, len(chunk),
+                )
+        except Exception:
+            logger.exception("%s batch write failed for a chunk of %d items", table_name, len(chunk))
 
 
 # ── IAM policy version management ───────────────────────────────────────────────
@@ -584,7 +618,7 @@ def handler(event: dict[str, Any], context: object) -> None:
     """Lambda entry point: query today's spend, then rewrite enforcement CMPs.
 
     Emits a TIMING log line per phase (athena_and_parse, batch_reads,
-    per_person_loop, cmp_writes, total). If a run ever gets slow enough that
+    per_person_loop, state_writes, cmp_writes, total). If a run ever gets slow enough that
     the next 15-minute schedule fires before it finishes, EventBridge's
     default async retry can stack a second invocation on top of a
     still-running one — whichever finishes LAST would win the CMP write, not
@@ -620,6 +654,7 @@ def handler(event: dict[str, Any], context: object) -> None:
 
     loop_start = time.monotonic()
     notify_count = 0
+    state_updates: list[dict[str, Any]] = []
     for person, spend_usd in spend_by_person.items():
         try:
             exc_item = exception_items.get(person, {})
@@ -639,12 +674,18 @@ def handler(event: dict[str, Any], context: object) -> None:
             notified_tiers_after = _notify_if_new_tier(person, spend_usd, limit, notified_tiers_before)
             if notified_tiers_after != notified_tiers_before:
                 notify_count += 1
-            _save_user_state(person, spend_usd, required_denies, notified_tiers_after)
+            state_updates.append(_build_state_item(person, spend_usd, required_denies, notified_tiers_after))
         except Exception as exc:
             logger.error("Error processing user %s: %s", person, exc, exc_info=True)
     logger.info(
         "TIMING per_person_loop=%.1fs persons=%d dms_sent=%d",
         time.monotonic() - loop_start, len(spend_by_person), notify_count,
+    )
+
+    state_write_start = time.monotonic()
+    _batch_write_items(STATE_TABLE, state_updates)
+    logger.info(
+        "TIMING state_writes=%.1fs persons=%d", time.monotonic() - state_write_start, len(state_updates)
     )
 
     cmp_write_start = time.monotonic()

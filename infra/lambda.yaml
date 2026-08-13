@@ -171,6 +171,8 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:PutItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
                 Resource:
                   - !Ref StateDynamoTableArn
                   - !Ref ExceptionsDynamoTableArn
@@ -199,8 +201,21 @@ Resources:
                     cloudwatch:namespace: BedrockSpendEnforcement
                 Resource: "*"
 
+  # Log group name is hardcoded (not !Sub ${EnforcementLambda}) to break the
+  # cycle: EnforcementLambda DependsOn this LogGroup, so the LogGroup cannot
+  # also reference the Lambda — same pattern as SlashCommandLogGroup in
+  # infra/slash-command.yaml. Without this, Lambda auto-creates its own log
+  # group with "Never expire" retention — unlike every other log group in
+  # this app, all of which are already set to 30 days.
+  EnforcementLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/bedrock-spend-enforcement
+      RetentionInDays: 30
+
   EnforcementLambda:
     Type: AWS::Lambda::Function
+    DependsOn: EnforcementLambdaLogGroup
     Properties:
       FunctionName: bedrock-spend-enforcement
       Runtime: python3.12
