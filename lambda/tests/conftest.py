@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("ATHENA_RESULTS_BUCKET", "s3://example-athena-results/")
 os.environ.setdefault("SLACK_EMAIL_DOMAIN", "example.com")
 
-import notifier  # noqa: F401,E402
+import notifier  # noqa: F401,E402 # lgtm[py/unused-import]
 
 
 def _fake_sts_client(service_name: str, *args: object, **kwargs: object) -> MagicMock:
@@ -39,4 +39,4 @@ def _fake_sts_client(service_name: str, *args: object, **kwargs: object) -> Magi
 
 
 with patch("boto3.client", side_effect=_fake_sts_client):
-    import handler  # noqa: F401  (resolves T1_POLICY_ARN/T2_POLICY_ARN once, deterministically)
+    import handler  # noqa: F401 # lgtm[py/unused-import]  (resolves T1_POLICY_ARN/T2_POLICY_ARN once, deterministically)

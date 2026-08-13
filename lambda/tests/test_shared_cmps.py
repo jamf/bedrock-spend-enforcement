@@ -11,7 +11,7 @@ import pytest
 from handler import (
     write_shared_policy, update_shared_cmps, _save_user_state,
     _ensure_policy_version_slots,
-    T1_POLICY_ARN, T2_POLICY_ARN, OPUS_KEYWORDS, DEFAULT_DAILY_LIMIT,
+    T1_POLICY_ARN, T2_POLICY_ARN, OPUS_KEYWORDS,
 )
 
 
