@@ -487,8 +487,8 @@ def _emit_oversize_metric(policy_arn: str, user_count: int) -> None:
 def _size_warning_level(policy_arn: str, doc_size: int, user_count: int) -> dict[str, Any] | None:
     """Classify a successfully-written policy doc's size into a warning dict, or None.
 
-    Split out of write_shared_policy so that function has a single return in its
-    success path (SonarQube python:S1142 caps functions at 3 returns).
+    Split out of write_shared_policy so that function keeps a single return in
+    its success path.
     """
     if doc_size >= POLICY_SIZE_CRITICAL_THRESHOLD:
         level = "critical"
